@@ -49,6 +49,9 @@ class TextTransformer(nn.Module):
                 num_embeddings=context_length, embedding_dim=model_dim
             )
         )
+        self.trainable_prompt = nn.Parameter(
+            torch.zeros((1, 1, model_dim)) 
+        ) if cfg.get('embed_trainable_prompt', False) else None
 
         self.embedding_dropout = nn.Dropout(p=embed_dropout)
 
@@ -152,14 +155,26 @@ class TextTransformer(nn.Module):
         """
         # [batch_size, context_length] --> [batch_size, context_length, hidden_dim]
         token_emb = self.embedding_layer(text_tokens)
+        
+        if self.trainable_prompt is not None:
+            b = token_emb.shape[0]
+            token_emb = torch.cat(
+                (self.trainable_prompt.view(1, 1, -1).expand(b, -1, -1), token_emb),
+                axis=1
+            )
+
+        token_emb = self.add_positional_embedding(token_emb)
+        token_emb = self.embedding_dropout(token_emb)
+        return token_emb
+
+    def add_positional_embedding(self, token_emb: Tensor) -> Tensor:
         seq_len = token_emb.shape[1]
         if self.positional_embedding is not None:
             token_emb = token_emb + self.positional_embedding(seq_len).to(
                 token_emb.dtype
             )
-        token_emb = self.embedding_dropout(token_emb)
         return token_emb
-
+     
     def build_attention_mask(self, context_length: int, batch_size: int) -> Tensor:
         """Build causal attention mask [batch_size, context_length, context_length]."""
         # Build mask with full attention between the tokens
